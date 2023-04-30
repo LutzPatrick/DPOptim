@@ -64,9 +64,11 @@ if __name__=='__main__':
             )
             logger.info(f'DP training using sigma={optimizer.noise_multiplier} and clip={hp["clip"]}')
         # train model, stats are saved in metrics object
-        train(data, model, optimizer, loss_fn, hp['epochs'], metrics, device)
+        train(data, model, optimizer, loss_fn, 40, metrics, device, ponc=True)
         # increment run counter in metrics object
         metrics.increment_run()
+        if args.optim_name in ['DPSGD']:
+            logger.info(f'privacy budget spent {(privacy_engine.get_epsilon(args.delta), args.delta)}')
 
     # copy metrics to cpu
     metrics.to('cpu')
