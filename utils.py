@@ -1,8 +1,13 @@
 import torch
+from optimizer import Gradient_Checkpoint, PONC_descent
 
 def get_optimizer(optim_name, model, hp):
     if optim_name in ['SGD', 'DPSGD']:
         return torch.optim.SGD(model.parameters(), lr=hp['lr'], momentum=hp['momentum'])
+    if optim_name in ['PONC', 'DPPONC']:
+        grad_checkpoint = Gradient_Checkpoint(model.parameters(), lr=hp['lr'])
+        ponc_descent = PONC_descent(model.parameters(), lr=hp['lr'], D=hp['D'], grad_checkpoint=grad_checkpoint)
+        return (grad_checkpoint, ponc_descent)
     raise ValueError()
 
 def accuracy(x, y):

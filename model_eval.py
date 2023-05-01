@@ -20,7 +20,7 @@ if __name__=='__main__':
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--dataset', choices=['MNIST'])
-    parser.add_argument('--optim_name', choices=['SGD', 'DPSGD'])
+    parser.add_argument('--optim_name', choices=['SGD', 'DPSGD', 'PONC'])
     parser.add_argument('--n_threads', default=0)
     parser.add_argument('--runs', type=int)
     parser.add_argument('--epsilon', type=float)
