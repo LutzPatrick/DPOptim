@@ -1,5 +1,6 @@
-batch_size_base: 9
-lr_base: 0.05
-momentum_base: 9
+D: 1.0e-04
+batch_size_base: 8
+lr: 0.5
 epochs: 40
 clip: 0.1
+eps_frac_cp: 0.9

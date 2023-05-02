@@ -1,44 +1,48 @@
 import logging
 import torch
 import copy
+from opacus import GradSampleModule
+from models import get_model
 
 logger = logging.getLogger('core')
 logger.setLevel(logging.INFO)
 #logger.addHandler(logging.StreamHandler(sys.stdout))
 
 def test(data, model, mode, epoch, metrics, device):
-    for batch, target in data[mode]:
+    data = data[mode]
+    if type(data) == tuple:
+        data = data[0]
+
+    for batch, target in data:
         pred = model(batch.to(device))
         for metric_fn in metrics.metric_fns:
             metrics[metric_fn, mode, epoch] += metric_fn(pred.detach(), target.to(device))*len(batch)
     for metric_fn in metrics.metric_fns:
-        metrics[metric_fn, mode, epoch] /= len(data[mode].dataset)
+        metrics[metric_fn, mode, epoch] /= len(data.dataset)
 
-def train(data, model, optimizer, loss_fn, epochs, metrics, device, ponc=False):
+def train(data, model, optimizer, loss_fn, epochs, metrics, device, dataset, ponc=False):
     
-    # with torch.no_grad():
-    #     test(data, model, 'train', 0, metrics, device)
-    #     test(data, model, 'val', 0, metrics, device)
-    #     test(data, model, 'test', 0, metrics, device)
-    logger.info(f'[{0}/{epochs}] loss train {metrics[loss_fn, "train", 0]:.5}, '
-            f'val {metrics[loss_fn, "val", 0]:.5}, test {metrics[loss_fn, "test", 0]:.5}')
+    with torch.no_grad():
+        test(data, model, 'train', 0, metrics, device)
+        test(data, model, 'test', 0, metrics, device)
+    logger.info(f'[{0}/{epochs}] train loss {metrics[loss_fn, "train", 0]:.5} acc {metrics[metrics.metric_fns[1], "train", 0]:.5}, '
+            f'test loss {metrics[loss_fn, "test", 0]:.5} acc {metrics[metrics.metric_fns[1], "train", 0]:.5}')
 
     for epoch in range(1, epochs+1):
 
         if ponc:
-            train_one_epoch_ponc(data, model, loss_fn, optimizer, metrics, epoch, device)
+            train_one_epoch_ponc(data, model, loss_fn, optimizer, dataset, device)
         else:
-            train_one_epoch_sgd(data, model, loss_fn, optimizer, metrics, epoch, device)
+            train_one_epoch_sgd(data, model, loss_fn, optimizer, device)
 
         with torch.no_grad():
             test(data, model, 'train', epoch, metrics, device)
-            test(data, model, 'val', epoch, metrics, device)
             test(data, model, 'test', epoch, metrics, device)
 
-        logger.info(f'[{epoch}/{epochs}] loss train {metrics[loss_fn, "train", epoch]:.5}, '
-            f'val {metrics[loss_fn, "val", epoch]:.5}, test {metrics[loss_fn, "test", epoch]:.5}')
+        logger.info(f'[{epoch}/{epochs}] train loss {metrics[loss_fn, "train", epoch]:.5} acc {metrics[metrics.metric_fns[1], "train", epoch]:.5}, '
+            f'test loss {metrics[loss_fn, "test", epoch]:.5} acc {metrics[metrics.metric_fns[1], "train", epoch]:.5}')
 
-def train_one_epoch_sgd(data, model, loss_fn, optimizer, metrics, epoch, device):
+def train_one_epoch_sgd(data, model, loss_fn, optimizer, device):
 
     for batch, target in data['train']:
         batch, target = batch.to(device), target.to(device)
@@ -48,43 +52,46 @@ def train_one_epoch_sgd(data, model, loss_fn, optimizer, metrics, epoch, device)
         loss.backward()
         optimizer.step()
 
-def train_one_epoch_ponc(data, model, loss_fn, optimizer, metrics, epoch, device):
+def train_one_epoch_ponc(data, model, loss_fn, optimizer, dataset, device):
 
+    train_cp, train_diff = data['train']
+    train_cp, train_diff = iter(train_cp), iter(train_diff)
     grad_checkpoint, ponc_descent = optimizer
 
-    for i, (batch, target) in enumerate(data['train']):
-        batch, target = batch.to(device), target.to(device)
-
-        if not i % 2:
-            # checkpoint gradient
-            pred = model(batch)
-            loss = loss_fn(pred, target)
-            grad_checkpoint.zero_grad()
-            loss.backward()
-            grad_checkpoint.step()
-            model_prev = copy.deepcopy(model)
-            print('check point loss', loss)
+    model_prev = get_model(dataset, device)
+    if isinstance(model, GradSampleModule):
+        model_prev = GradSampleModule(model_prev)
         
-        else:
-            # consider each element in batch individually
-            for i in range(len(batch)):
-                batchi = batch[i, ...][None, ...]
-                targeti = target[i, ...][None, ...]
-                # current weight
-                pred = model(batchi)
-                loss = loss_fn(pred, targeti)
-                ponc_descent.zero_grad()
-                loss.backward()
-                # previous weight
-                pred2 = model_prev(batchi)
-                loss2 = loss_fn(pred2, targeti)
-                model_prev.zero_grad()
-                loss2.backward()
-                
-                # update
-                gradient_difference(model, model_prev)
-                ponc_descent.step()
-                model_prev = copy.deepcopy(model)#model_prev.load_state_dict(model.state_dict())
+    for _ in range(len(train_cp)):
+        batch_cp, target_cp = next(train_cp)
+        batch_cp, target_cp = batch_cp.to(device), target_cp.to(device)
+        
+        # checkpoint gradient
+        pred = model(batch_cp)
+        loss = loss_fn(pred, target_cp)
+        grad_checkpoint.zero_grad()
+        loss.backward()
+        model_prev.load_state_dict(model.state_dict())
+        grad_checkpoint.step()
+        logger.info(f'cp loss {loss}')
+        
+        for _ in range(len(batch_cp-1)):
+            batch_diff, target_diff = next(train_diff)
+            batch_diff, target_diff = batch_diff.to(device), target_diff.to(device)
+            # current weight
+            pred = model(batch_diff)
+            loss = loss_fn(pred, target_diff)
+            ponc_descent.zero_grad()
+            loss.backward()
+            # previous weight
+            pred2 = model_prev(batch_diff)
+            loss2 = loss_fn(pred2, target_diff)
+            model_prev.zero_grad()
+            loss2.backward()
+            # update
+            gradient_difference(model, model_prev)
+            model_prev.load_state_dict(model.state_dict())
+            ponc_descent.step()
 
 def gradient_difference(model1, model2):
     for p1, p2 in zip(model1.parameters(), model2.parameters()):

@@ -9,7 +9,7 @@ def load_data(data_name):
         data['train'] = getattr(datasets, data_name)('./datasets/', download=True, train=True, transform=transform)
         #data['train'], data['val'] = torch.utils.data.random_split(data['train'], [.8, .2])
         data['test'] = getattr(datasets, data_name)('./datasets/', download=True, train=False, transform=transform)
-        data['val'] = data['test']
+        #data['val'] = data['test']
 
     return data
 
@@ -68,6 +68,17 @@ class Metrics():
             best_idx = torch.argmax(summary_val)
         elif dir=='low':
             best_idx = torch.argmin(summary_val)
+        else:
+            raise ValueError()
+        summary_train, summary_val, summary_test = self.get_summary(metric)
+        return summary_train[best_idx], summary_val[best_idx], summary_test[best_idx]
+    
+    def get_best_train(self, metric, comp_metric, dir='low'):
+        summary_train, summary_val, summary_test = self.get_summary(comp_metric)
+        if dir=='high':
+            best_idx = torch.argmax(summary_train)
+        elif dir=='low':
+            best_idx = torch.argmin(summary_train)
         else:
             raise ValueError()
         summary_train, summary_val, summary_test = self.get_summary(metric)

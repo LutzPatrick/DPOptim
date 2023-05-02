@@ -1,13 +1,21 @@
 import pickle
-import yaml
+import matplotlib.pyplot as plt
 from utils import accuracy
 
-with open('./config.yaml', 'r') as file:
-    args = yaml.safe_load(file)
-with open(f'./runs/{args["optim_name"]}_{args["data_name"]}.pkl', 'rb') as file:
-    metrics = pickle.load(file)
+data_name = 'MNIST'
 
-print('best loss', metrics.get_best_val('CrossEntropyLoss', 'CrossEntropyLoss'))
-print('best acc', metrics.get_best_val('accuracy', 'CrossEntropyLoss'))
-print('summary', metrics.get_summary(accuracy))
+metrics = dict()
+for optim in ['SGD', 'ONC', 'DPSGD']:
+    with open(f'./runs/{optim}_{data_name}.pkl', 'rb') as file:
+        data = pickle.load(file)
+    metrics[optim] = data.get_summary(accuracy)
+
+for optim in ['SGD', 'DPSGD', 'ONC']:
+    metric_train, _, metric_test = metrics[optim]
+    print(metric_test)
+    plt.plot(range(len(metric_test)), metric_test, label=optim)
+    #plt.plot(range(len(metric_test)), metric_test, label=optim)
+
+plt.legend()
+plt.show()
 

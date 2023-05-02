@@ -1,0 +1,4 @@
+D: 1.0e-03
+batch_size_base: 8
+lr: 0.001
+epochs: 40

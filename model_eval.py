@@ -5,10 +5,9 @@ import logging
 import pickle
 import warnings
 import argparse
-from opacus import PrivacyEngine
-from utils import get_optimizer, accuracy, hp_from_file
+from utils import get_optimizer, accuracy, hp_from_file, make_dp, get_dataloader
 from models import get_model
-from datasets import load_data, Metrics
+from datasets import Metrics
 from core import train
 
 
@@ -20,7 +19,7 @@ if __name__=='__main__':
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--dataset', choices=['MNIST'])
-    parser.add_argument('--optim_name', choices=['SGD', 'DPSGD', 'PONC'])
+    parser.add_argument('--optim_name', choices=['SGD', 'DPSGD', 'ONC', 'PONC'])
     parser.add_argument('--n_threads', default=0)
     parser.add_argument('--runs', type=int)
     parser.add_argument('--epsilon', type=float)
@@ -36,9 +35,7 @@ if __name__=='__main__':
     logger.info(f'hp setting {hp}')
     
     # load data. note: for now, data['val'] = data['test']
-    data = load_data(args.dataset)
-    for key, val in data.items():
-        data[key] = torch.utils.data.DataLoader(val, batch_size=hp['batch_size'], shuffle=True, num_workers=args.n_threads)
+    data = get_dataloader(args, hp)
 
     # define learning objects shared over all runs
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -50,25 +47,18 @@ if __name__=='__main__':
         # get model, optimizer and make DP
         model = get_model(args.dataset, device)
         optimizer = get_optimizer(args.optim_name, model, hp)
-        if args.optim_name in ['DPSGD']:
-            privacy_engine = PrivacyEngine()
-            model, optimizer, data['train'] = privacy_engine.make_private_with_epsilon(
-                module=model,
-                optimizer=optimizer,
-                data_loader=data['train'],
-                #noise_multiplier=args.noise_multiplier,
-                max_grad_norm=hp['clip'],
-                epochs=hp['epochs'],
-                target_epsilon=args.epsilon,
-                target_delta=args.delta,
-            )
-            logger.info(f'DP training using sigma={optimizer.noise_multiplier} and clip={hp["clip"]}')
+        privacy_engine, model, optimizer, data['train'] = make_dp(model, optimizer, data['train'], args, hp, logger)
         # train model, stats are saved in metrics object
-        train(data, model, optimizer, loss_fn, 40, metrics, device, ponc=True)
+        ponc = args.optim_name in ['ONC', 'PONC']
+        train(data, model, optimizer, loss_fn, hp['epochs'], metrics, device, args.dataset, ponc=ponc)
         # increment run counter in metrics object
         metrics.increment_run()
         if args.optim_name in ['DPSGD']:
             logger.info(f'privacy budget spent {(privacy_engine.get_epsilon(args.delta), args.delta)}')
+        if args.optim_name in ['PONC']:
+            privacy_engine1, privacy_engine2 = privacy_engine
+            logger.info(f'privacy budget spent on checkpoint {(privacy_engine1.get_epsilon(args.delta), args.delta/2)}')
+            logger.info(f'privacy budget spent on ponc descent {(privacy_engine2.get_epsilon(args.delta), args.delta/2)}')
 
     # copy metrics to cpu
     metrics.to('cpu')
